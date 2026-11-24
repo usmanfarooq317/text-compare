@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text Compare</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  // Apply saved / system theme before paint (no flash)
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('tc-theme'); } catch (e) {}
+    if (!t) t = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+<style>
+  :root, [data-theme="light"]{
+    --page:#c8d3e3;
+    --bar:#16325a;
+    --bar-text:#eef3fa;
+    --panel:#eef2f8;
+    --head:#dde5f0;
+    --field:#fcfdfe;
+    --ink:#14223a;
+    --ink-2:#34465f;
+    --muted:#5b6b84;
+    --line:#b9c5d6;
+    --line-strong:#9aa9be;
+    --accent:#2457a6;
+    --accent-tint:#dfe8f5;
+    --btn:#2457a6;
+    --btn-hover:#1c4686;
+
+    --add-bg:#dcf2e3;  --add-mark:#8fd4a5;  --add-ink:#17663f;  --add-bar:#2e9e5f;
+    --del-bg:#fde3e0;  --del-mark:#f4a29a;  --del-ink:#a1271f;  --del-bar:#d0473c;
+    --chg-ink:#8a5a00;
+    --focus-row:#f0b429;
+    --empty:#e9edf3;
+    --hatch:rgba(27,43,68,.05);
+    --shadow:0 1px 2px rgba(27,43,68,.06),0 8px 24px -16px rgba(27,43,68,.35);
+  }
+  [data-theme="dark"]{
+    --page:#181c24;
+    --bar:#232934;
+    --bar-text:#eceff4;
+    --panel:#2b313d;
+    --head:#363d4b;
+    --field:#20252e;
+    --ink:#eceff4;
+    --ink-2:#d8dee9;
+    --muted:#a0abbe;
+    --line:#434c5e;
+    --line-strong:#5a6479;
+    --accent:#88c0d0;
+    --accent-tint:#33404f;
+    --btn:#4c71a3;
+    --btn-hover:#5e81ac;
+
+    --add-bg:#2d3b33;  --add-mark:#5b7d4a;  --add-ink:#a3be8c;  --add-bar:#a3be8c;
+    --del-bg:#41303a;  --del-mark:#8c4a52;  --del-ink:#e5939a;  --del-bar:#bf616a;
+    --chg-ink:#ebcb8b;
+    --focus-row:#ebcb8b;
+    --empty:#2a2f3b;
+    --hatch:rgba(255,255,255,.035);
+    --shadow:0 1px 2px rgba(0,0,0,.25),0 10px 28px -16px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:14px;line-height:1.5;
+    background:var(--page);color:var(--ink);-webkit-font-smoothing:antialiased;
+  }
+  textarea,table.diff{font-family:'IBM Plex Mono',ui-monospace,monospace}
+  .container{max-width:1480px;margin:0 auto;padding:0 24px}
+  button{font:inherit;cursor:pointer}
+  button:focus-visible,textarea:focus-visible,input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* ---------- Top bar ---------- */
+  .topbar{background:var(--bar);color:var(--bar-text)}
+  .topbar .container{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:12px;padding-bottom:12px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:1.1rem;font-weight:600}
+  .logo{width:32px;height:32px;border-radius:7px;background:#2457a6;display:grid;place-items:center}
+  .theme{
+    display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.16);color:var(--bar-text);border-radius:7px;padding:6px 11px;font-size:.84rem;font-weight:500;
+  }
+  .theme:hover{background:rgba(255,255,255,.14)}
+  .theme .moon{display:none}
+  [data-theme="dark"] .theme .sun{display:none}
+  [data-theme="dark"] .theme .moon{display:inline}
+
+  main.container{padding-top:18px;padding-bottom:32px}
+
+  /* ---------- Editors + Compare ---------- */
+  .editors{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:14px;align-items:stretch}
+  .mid{display:flex;flex-direction:column;justify-content:center;gap:8px;width:104px}
+  .editor{background:var(--panel);border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .ed-head{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 14px;border-bottom:1px solid var(--line);background:var(--head);flex-wrap:wrap}
+  .ed-head h2{font-size:.92rem;font-weight:600}
+  .badge{font-size:.72rem;font-weight:600;padding:1px 8px;border-radius:5px;background:var(--accent-tint);color:var(--accent)}
+  .badge:empty{display:none}
+  .badge.bad{background:var(--del-bg);color:var(--del-ink)}
+  .ed-tools{margin-left:auto;display:flex;gap:6px}
+  .tool{
+    display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line-strong);
+    color:var(--ink);font-size:.76rem;font-weight:600;padding:3px 9px;border-radius:6px;
+  }
+  .tool svg{color:var(--accent)}
+  .tool:hover{background:var(--accent-tint);border-color:var(--accent);color:var(--accent)}
+  textarea{
+    width:100%;height:300px;min-height:200px;resize:vertical;border:0;outline:none;display:block;
+    background:var(--field);color:var(--ink);padding:10px 12px;font-size:.76rem;line-height:1.55;
+    white-space:pre;overflow:auto;tab-size:2;
+  }
+  textarea::placeholder{color:var(--muted);font-family:'IBM Plex Sans',sans-serif;font-size:.84rem}
+  .ed-err{display:none;padding:6px 12px;font-size:.76rem;color:var(--del-ink);background:var(--del-bg);border-top:1px solid var(--line)}
+  .ed-err.show{display:block}
+
+  .btn{
+    border-radius:7px;padding:8px 12px;font-size:.86rem;font-weight:600;border:1px solid var(--line-strong);
+    background:var(--panel);color:var(--ink-2);display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  }
+  .btn:hover{background:var(--head);color:var(--ink)}
+  .btn-primary{background:var(--btn);border-color:var(--btn);color:#fff;flex-direction:column;padding:14px 10px;gap:4px;font-size:.92rem}
+  .btn-primary:hover{background:var(--btn-hover);border-color:var(--btn-hover);color:#fff}
+  .btn-primary:disabled{opacity:.7;cursor:progress}
+  .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:none}
+  .loading .spinner{display:inline-block}
+  .loading .cmp-icon{display:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---------- Options ---------- */
+  .opts{
+    display:flex;gap:20px;flex-wrap:wrap;margin:14px 0;padding:10px 16px;
+    background:var(--panel);border:1px solid var(--line-strong);border-radius:10px;
+  }
+  .opt{display:flex;align-items:center;gap:8px;font-size:.84rem;color:var(--ink-2);cursor:pointer;user-select:none}
+  .opt input{position:absolute;opacity:0;width:1px;height:1px}
+  .opt span{width:30px;height:17px;border-radius:9px;background:var(--line-strong);position:relative;flex-shrink:0;transition:background .15s}
+  .opt span::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:transform .15s}
+  .opt input:checked+span{background:var(--btn)}
+  .opt input:checked+span::after{transform:translateX(13px)}
+
+  .alert{display:none;margin:0 0 14px;padding:9px 14px;border-left:3px solid var(--del-ink);background:var(--del-bg);color:var(--del-ink);border-radius:4px;font-size:.86rem}
+  .alert.show{display:block}
+
+  /* ---------- Results ---------- */
+  .results{display:none;background:var(--panel);border:1px solid var(--line-strong);border-radius:10px;box-shadow:var(--shadow)}
+  .results.show{display:block}
+  .summary{
+    display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:10px 16px;
+    border-bottom:1px solid var(--line);background:var(--head);border-radius:10px 10px 0 0;
+  }
+  .sim{font-size:1.25rem;font-weight:700}
+  .sim small{font-size:.82rem;font-weight:400;color:var(--muted);margin-left:4px}
+  .counts{display:flex;gap:14px;font-size:.84rem}
+  .counts b{font-weight:600}
+  .c-chg{color:var(--chg-ink)} .c-add{color:var(--add-ink)} .c-del{color:var(--del-ink)}
+  .summary .right{margin-left:auto;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .nav{display:flex;gap:6px}
+  .nav button{
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);border-radius:6px;
+    padding:4px 10px;font-size:.8rem;font-weight:600;
+  }
+  .nav button:hover:not(:disabled){background:var(--accent-tint);border-color:var(--accent);color:var(--accent)}
+  .nav button:disabled{opacity:.45;cursor:default}
+
+  .same{display:none;padding:24px 16px;text-align:center;color:var(--add-ink);font-weight:500}
+  .same.show{display:block}
+
+  /* full height: no inner scroll box, the page itself scrolls */
+  table.diff{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.76rem;line-height:1.6;background:var(--field)}
+  table.diff col.num{width:46px}
+  table.diff thead th{
+    background:var(--head);color:var(--ink-2);text-align:left;font-family:'IBM Plex Sans',sans-serif;
+    font-weight:600;font-size:.8rem;padding:6px 10px;border-bottom:1px solid var(--line);
+  }
+  table.diff thead th:nth-child(2){border-left:1px solid var(--line)}
+  td{vertical-align:top;padding:1px 10px}
+  td.n{color:var(--muted);text-align:right;user-select:none;padding-right:8px;font-size:.7rem;padding-top:2px;border-left:3px solid transparent}
+  td.n.r{box-shadow:inset 1px 0 0 var(--line)}
+  td.c{white-space:pre-wrap;word-break:break-all;color:var(--ink)}
+  tr.del td.l,tr.chg td.l{background:var(--del-bg)}
+  tr.ins td.r,tr.chg td.r{background:var(--add-bg)}
+  tr.del td.n.l,tr.chg td.n.l{background:var(--del-bg);border-left-color:var(--del-bar);color:var(--del-ink)}
+  tr.ins td.n.r,tr.chg td.n.r{background:var(--add-bg);border-left-color:var(--add-bar);color:var(--add-ink)}
+  tr.current td{box-shadow:inset 0 2px 0 var(--focus-row),inset 0 -2px 0 var(--focus-row)}
+  td.blank{background:repeating-linear-gradient(135deg,var(--empty),var(--empty) 5px,var(--hatch) 5px,var(--hatch) 10px)}
+  mark{border-radius:3px;color:inherit;padding:1px 2px}
+  td.l mark{background:var(--del-mark)}
+  td.r mark{background:var(--add-mark)}
+  tr.fold td{background:var(--head);color:var(--accent);font-family:'IBM Plex Sans',sans-serif;font-size:.78rem;font-weight:500;text-align:center;padding:4px;cursor:pointer}
+  tr.fold td:hover{background:var(--accent-tint)}
+  .results table.diff{border-radius:0 0 10px 10px;overflow:hidden}
+
+  .toast{
+    position:fixed;left:50%;bottom:22px;transform:translate(-50%,12px);opacity:0;pointer-events:none;
+    background:var(--bar);color:var(--bar-text);padding:8px 16px;border-radius:7px;font-size:.86rem;
+    box-shadow:0 8px 24px -8px rgba(0,0,0,.45);transition:opacity .2s,transform .2s;z-index:10;
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  @media (max-width:900px){
+    .editors{grid-template-columns:1fr}
+    .mid{flex-direction:row;width:auto}
+    .btn-primary{flex:1;flex-direction:row;padding:10px}
+    textarea{height:200px}
+    .summary .right{margin-left:0}
+  }
+  @media (max-width:560px){.container{padding:0 12px}}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="container">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><path d="M5.5 9h2M5.5 13h2M16.5 9h2M16.5 13h2"/></svg>
+      </div>
+      Text Compare
+    </div>
+    <button class="theme" id="themeBtn" type="button" aria-label="Switch colour theme">
+      <svg class="sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <svg class="moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <span id="themeLabel">Dark mode</span>
+    </button>
+  </div>
+</header>
+
+<main class="container">
+  <section class="editors">
+    <div class="editor" id="edLeft">
+      <div class="ed-head">
+        <h2>Original</h2>
+        <span class="badge" id="badgeLeft"></span>
+        <div class="ed-tools">
+          <button class="tool" type="button" data-act="open"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Open file</button>
+          <button class="tool" type="button" data-act="format"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M8 12h12M8 18h12"/></svg>Format</button>
+          <button class="tool" type="button" data-act="clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Clear</button>
+        </div>
+      </div>
+      <textarea id="left" spellcheck="false" placeholder="Paste the original text"></textarea>
+      <div class="ed-err" id="errLeft"></div>
+    </div>
+
+    <div class="mid">
+      <button class="btn btn-primary" type="button" id="compareBtn">
+        <span class="spinner"></span>
+        <svg class="cmp-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7h12l-3-3M16 17H4l3 3"/></svg>
+        <span>Compare</span>
+      </button>
+      <button class="btn" type="button" id="clearBtn">Clear all</button>
+    </div>
+
+    <div class="editor" id="edRight">
+      <div class="ed-head">
+        <h2>Changed</h2>
+        <span class="badge" id="badgeRight"></span>
+        <div class="ed-tools">
+          <button class="tool" type="button" data-act="open"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Open file</button>
+          <button class="tool" type="button" data-act="format"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M8 12h12M8 18h12"/></svg>Format</button>
+          <button class="tool" type="button" data-act="clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Clear</button>
+        </div>
+      </div>
+      <textarea id="right" spellcheck="false" placeholder="Paste the changed text"></textarea>
+      <div class="ed-err" id="errRight"></div>
+    </div>
+  </section>
+  <input type="file" id="fileInput" hidden accept=".txt,.json,.xml,.wsdl,.xsd,.soap,.html,.htm,.yaml,.yml,.log,.csv,.properties,.conf,text/*">
+
+  <section class="opts">
+    <label class="opt"><input type="checkbox" id="optFormat" checked><span></span>Format before comparing</label>
+    <label class="opt"><input type="checkbox" id="optWs"><span></span>Ignore whitespace</label>
+    <label class="opt"><input type="checkbox" id="optCase"><span></span>Ignore case</label>
+    <label class="opt"><input type="checkbox" id="optSort"><span></span>Sort JSON keys</label>
+  </section>
+
+  <div class="alert" id="alert" role="alert"></div>
+
+  <section class="results" id="results" aria-live="polite">
+    <div class="summary">
+      <div class="sim" id="simValue">0%<small>similar</small></div>
+      <div class="counts">
+        <span class="c-chg"><b id="cChg">0</b> changed</span>
+        <span class="c-add"><b id="cAdd">0</b> added</span>
+        <span class="c-del"><b id="cDel">0</b> removed</span>
+      </div>
+      <div class="right" id="rightBar">
+        <label class="opt"><input type="checkbox" id="optOnly"><span></span>Only differences</label>
+        <div class="nav">
+          <button type="button" id="prevBtn">&#8593; Previous</button>
+          <button type="button" id="nextBtn">Next &#8595;</button>
+        </div>
+      </div>
+    </div>
+    <div class="same" id="same">The two texts are identical.</div>
+    <table class="diff" id="diffTable">
+      <colgroup><col class="num"><col><col class="num"><col></colgroup>
+      <thead><tr><th colspan="2">Original</th><th colspan="2">Changed</th></tr></thead>
+      <tbody id="diffBody"></tbody>
+    </table>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const L = $('left'), R = $('right');
+  let lastRows = null;
+
+  // ---------- Theme ----------
+  function applyThemeLabel() {
+    $('themeLabel').textContent = document.documentElement.getAttribute('data-theme') === 'dark' ? 'Light mode' : 'Dark mode';
+  }
+  $('themeBtn').addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('tc-theme', next); } catch (e) {}
+    applyThemeLabel();
+  });
+  applyThemeLabel();
+
+  // ---------- Helpers ----------
+  let toastTimer;
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1600);
+  }
+  function showAlert(msg) { const a = $('alert'); a.textContent = msg; a.classList.add('show'); }
+  function hideAlert() { $('alert').classList.remove('show'); }
+
+  async function post(url, body) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'The request failed. Try again.');
+    return data;
+  }
+
+  const sides = {
+    left:  { ta: L, badge: $('badgeLeft'),  err: $('errLeft') },
+    right: { ta: R, badge: $('badgeRight'), err: $('errRight') },
+  };
+
+  // Format badge (e.g. "SOAP 1.1"); an error line only when the text is invalid
+  function setBadge(side, info) {
+    const s = sides[side];
+    s.badge.className = 'badge'; s.badge.textContent = '';
+    s.err.classList.remove('show');
+    if (!info || info.format === 'empty') return;
+    s.badge.textContent = info.label;
+    if (!info.valid) {
+      s.badge.classList.add('bad');
+      s.err.textContent = info.error || 'This text is not valid.';
+      s.err.classList.add('show');
+    }
+  }
+
+  const timers = {};
+  function scheduleDetect(side) {
+    clearTimeout(timers[side]);
+    timers[side] = setTimeout(async () => {
+      const text = sides[side].ta.value;
+      if (!text.trim()) { setBadge(side, null); return; }
+      try { setBadge(side, await post('/api/detect', { text })); } catch (e) {}
+    }, 350);
+  }
+  L.addEventListener('input', () => scheduleDetect('left'));
+  R.addEventListener('input', () => scheduleDetect('right'));
+
+  // ---------- Editor buttons ----------
+  let openTarget = 'left';
+  document.querySelectorAll('.editor').forEach(ed => {
+    const side = ed.id === 'edLeft' ? 'left' : 'right';
+    ed.querySelectorAll('.tool').forEach(btn => btn.addEventListener('click', async () => {
+      const act = btn.dataset.act, ta = sides[side].ta;
+      if (act === 'clear') { ta.value = ''; scheduleDetect(side); ta.focus(); }
+      if (act === 'open') { openTarget = side; $('fileInput').click(); }
+      if (act === 'format') {
+        if (!ta.value.trim()) return;
+        try {
+          const r = await post('/api/format', { text: ta.value, sortKeys: $('optSort').checked });
+          if (!r.valid) { showAlert(`The ${side === 'left' ? 'original' : 'changed'} text could not be formatted. ${r.error || ''}`); return; }
+          hideAlert(); ta.value = r.result; scheduleDetect(side); toast('Formatted');
+        } catch (e) { showAlert(e.message); }
+      }
+    }));
+  });
+
+  $('fileInput').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    if (f.size > 3 * 1024 * 1024) { showAlert('That file is larger than 3 MB. Choose a smaller file.'); return; }
+    const reader = new FileReader();
+    reader.onload = () => { sides[openTarget].ta.value = reader.result; scheduleDetect(openTarget); };
+    reader.readAsText(f);
+    e.target.value = '';
+  });
+
+  $('clearBtn').addEventListener('click', () => {
+    L.value = R.value = ''; scheduleDetect('left'); scheduleDetect('right');
+    $('results').classList.remove('show'); hideAlert(); L.focus();
+  });
+
+  // ---------- Compare ----------
+  async function compare() {
+    hideAlert();
+    if (!L.value.trim() || !R.value.trim()) {
+      showAlert(!L.value.trim() ? 'Paste the original text on the left first.' : 'Paste the changed text on the right first.');
+      return;
+    }
+    const btn = $('compareBtn'); btn.disabled = true; btn.classList.add('loading');
+    try {
+      const data = await post('/api/compare', {
+        left: L.value, right: R.value,
+        options: {
+          format: $('optFormat').checked, clean: true,
+          ignoreWhitespace: $('optWs').checked, ignoreCase: $('optCase').checked, sortKeys: $('optSort').checked,
+        },
+      });
+      setBadge('left', data.left); setBadge('right', data.right);
+      renderResult(data);
+    } catch (e) {
+      showAlert(e.message === 'Failed to fetch' ? 'The server could not be reached. Check that the app is running.' : e.message);
+    } finally {
+      btn.disabled = false; btn.classList.remove('loading');
+    }
+  }
+  $('compareBtn').addEventListener('click', compare);
+  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); compare(); } });
+
+  function renderResult(data) {
+    const s = data.stats;
+    $('simValue').firstChild.textContent = `${s.similarity}%`;
+    $('cChg').textContent = s.changed; $('cAdd').textContent = s.added; $('cDel').textContent = s.removed;
+    $('same').classList.toggle('show', s.identical);
+    $('diffTable').style.display = s.identical ? 'none' : '';
+    $('rightBar').style.display = s.identical ? 'none' : '';
+    lastRows = data.rows;
+    renderRows();
+    $('results').classList.add('show');
+    $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ---------- Diff table ----------
+  const CONTEXT = 3;
+  function cellContent(td, segs) {
+    for (const [hl, txt] of segs) {
+      if (hl) { const m = document.createElement('mark'); m.textContent = txt; td.appendChild(m); }
+      else td.appendChild(document.createTextNode(txt));
+    }
+    if (!segs.length || segs.every(s => !s[1])) td.appendChild(document.createTextNode('\u00a0'));
+  }
+  function buildRow(r) {
+    const tr = document.createElement('tr'); tr.className = r.t;
+    const ln = document.createElement('td'); ln.className = 'n l'; ln.textContent = r.ln ?? '';
+    const lc = document.createElement('td'); lc.className = 'c l';
+    const rn = document.createElement('td'); rn.className = 'n r'; rn.textContent = r.rn ?? '';
+    const rc = document.createElement('td'); rc.className = 'c r';
+    if (r.l) cellContent(lc, r.t === 'eq' ? [[0, r.l[0][1]]] : r.l); else { lc.classList.add('blank'); ln.classList.add('blank'); }
+    if (r.r) cellContent(rc, r.t === 'eq' ? [[0, r.r[0][1]]] : r.r); else { rc.classList.add('blank'); rn.classList.add('blank'); }
+    tr.append(ln, lc, rn, rc);
+    return tr;
+  }
+  function foldRow(rows, body) {
+    const tr = document.createElement('tr'); tr.className = 'fold';
+    const td = document.createElement('td'); td.colSpan = 4;
+    td.textContent = `Show ${rows.length} unchanged line${rows.length === 1 ? '' : 's'}`;
+    tr.appendChild(td);
+    tr.addEventListener('click', () => {
+      const frag = document.createDocumentFragment();
+      rows.forEach(r => frag.appendChild(buildRow(r)));
+      body.replaceChild(frag, tr);
+      const keep = cur; collectHunks(); if (keep >= 0) cur = keep;
+    });
+    return tr;
+  }
+  function renderRows() {
+    const body = $('diffBody'); body.textContent = '';
+    if (!lastRows) return;
+    const frag = document.createDocumentFragment();
+    if (!$('optOnly').checked) {
+      lastRows.forEach(r => frag.appendChild(buildRow(r)));
+    } else {
+      // Only differences: keep a few lines around each change, fold the rest
+      const keep = lastRows.map(() => false);
+      lastRows.forEach((r, i) => { if (r.t !== 'eq') for (let k = i - CONTEXT; k <= i + CONTEXT; k++) if (k >= 0 && k < keep.length) keep[k] = true; });
+      let hidden = [];
+      lastRows.forEach((r, i) => {
+        if (keep[i]) {
+          if (hidden.length) { frag.appendChild(foldRow(hidden, body)); hidden = []; }
+          frag.appendChild(buildRow(r));
+        } else hidden.push(r);
+      });
+      if (hidden.length) frag.appendChild(foldRow(hidden, body));
+    }
+    body.appendChild(frag);
+    collectHunks();
+  }
+  $('optOnly').addEventListener('change', renderRows);
+
+  // ---------- Previous / Next difference ----------
+  let hunks = [], cur = -1;
+  function collectHunks() {
+    hunks = []; let prev = false;
+    $('diffBody').querySelectorAll('tr').forEach(tr => {
+      const d = tr.classList.contains('del') || tr.classList.contains('ins') || tr.classList.contains('chg');
+      if (d && !prev) hunks.push([]);
+      if (d) hunks[hunks.length - 1].push(tr);
+      prev = d;
+    });
+    cur = -1;
+  }
+  function goTo(i) {
+    if (!hunks.length) return;
+    cur = Math.max(0, Math.min(hunks.length - 1, i));
+    document.querySelectorAll('tr.current').forEach(t => t.classList.remove('current'));
+    hunks[cur].forEach(t => t.classList.add('current'));
+    hunks[cur][0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  $('nextBtn').addEventListener('click', () => goTo(cur + 1));
+  $('prevBtn').addEventListener('click', () => goTo(cur - 1));
+</script>
+</body>
+</html>
