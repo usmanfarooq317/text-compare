@@ -103,7 +103,7 @@
   .ed-head h2{font-size:.92rem;font-weight:600}
   .badge{font-size:.72rem;font-weight:600;padding:1px 8px;border-radius:5px;background:var(--accent-tint);color:var(--accent)}
   .badge:empty{display:none}
-  .badge.bad{background:var(--del-bg);color:var(--del-ink)}
+  .badge.bad{background:var(--del-bg);color:var(--del-ink);cursor:help}
   .ed-tools{margin-left:auto;display:flex;gap:6px}
   .tool{
     display:inline-flex;align-items:center;gap:5px;background:var(--panel);border:1px solid var(--line-strong);
@@ -348,17 +348,18 @@
     right: { ta: R, badge: $('badgeRight'), err: $('errRight') },
   };
 
-  // Format badge (e.g. "SOAP 1.1"); an error line only when the text is invalid
+  // Format badge, e.g. "SOAP 1.1" or "Invalid JSON" (details on hover)
   function setBadge(side, info) {
     const s = sides[side];
-    s.badge.className = 'badge'; s.badge.textContent = '';
+    s.badge.className = 'badge'; s.badge.textContent = ''; s.badge.title = '';
     s.err.classList.remove('show');
     if (!info || info.format === 'empty') return;
-    s.badge.textContent = info.label;
-    if (!info.valid) {
+    if (info.valid) {
+      s.badge.textContent = info.label;
+    } else {
       s.badge.classList.add('bad');
-      s.err.textContent = info.error || 'This text is not valid.';
-      s.err.classList.add('show');
+      s.badge.textContent = 'Invalid ' + info.label;
+      s.badge.title = info.error || '';
     }
   }
 
@@ -385,9 +386,10 @@
       if (act === 'format') {
         if (!ta.value.trim()) return;
         try {
+          // always format; broken data is formatted as well as possible and marked "Invalid ..."
           const r = await post('/api/format', { text: ta.value, sortKeys: $('optSort').checked });
-          if (!r.valid) { showAlert(`The ${side === 'left' ? 'original' : 'changed'} text could not be formatted. ${r.error || ''}`); return; }
-          hideAlert(); ta.value = r.result; scheduleDetect(side); toast('Formatted');
+          hideAlert(); ta.value = r.result; scheduleDetect(side);
+          toast(r.valid ? 'Formatted' : `Formatted (invalid ${r.format})`);
         } catch (e) { showAlert(e.message); }
       }
     }));

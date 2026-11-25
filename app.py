@@ -3,9 +3,10 @@ Text Compare
 ------------
 Side-by-side text comparison with automatic format detection.
 
-Detects:  JSON, SOAP (1.1 / 1.2), XML, HTML, YAML, Form data, Plain text
+Detects:  JSON, JSON Lines (logs), SOAP (1.1 / 1.2), XML, HTML, YAML, Form data, Plain text
 Cleans:   escaped quotes (\\"), escaped new lines (\\n), stray wrapping quotes
 Formats:  JSON (indented), XML / SOAP (indented, including XML inside CDATA)
+          Broken JSON / XML is still formatted as well as possible.
 
 Run:
     pip install -r requirements.txt
@@ -96,18 +97,50 @@ def _looks_like_form(t):
     return len(pairs) >= 2 or (len(pairs) == 1 and "&" not in t and t.count("=") == 1 and len(t) < 500)
 
 
+def _json_lines(t):
+    """Several JSON records, one per line (typical for log files)?"""
+    lines = [l.strip() for l in t.splitlines() if l.strip()]
+    return len(lines) > 1 and all(l[:1] in "{[" for l in lines)
+
+
 def detect(raw: str):
-    """Return dict: format, label, cleaned, notes, valid, error."""
+    """Return dict: format, label, cleaned, notes, valid, error.
+
+    The raw text is tried first. The "cleaned" version (\\" unescaped etc.) is only
+    used when it parses better, so valid JSON with escaped quotes inside its
+    strings (e.g. log lines that carry XML) is not damaged.
+    """
     if not raw or not raw.strip():
         return {"format": "empty", "label": "Empty", "cleaned": "", "notes": [], "valid": True, "error": None}
 
+    original = raw.strip()
     cleaned, notes = clean_text(raw)
-    t = cleaned
+    results = [_classify(original, [])]
+    if cleaned != original:
+        results.append(_classify(cleaned, notes))
 
-    # JSON
+    for r in results:                                   # 1. valid and structured (JSON / XML / ...)
+        if r["valid"] and r["format"] != "text":
+            return r
+    for r in results:                                   # 2. valid plain text
+        if r["valid"]:
+            return r
+    # 3. nothing parses: JSON-looking text keeps its own escapes, XML-looking text uses the cleaned copy
+    return results[0] if original[:1] in "{[" or len(results) == 1 else results[1]
+
+
+def _classify(t, notes):
+    # JSON (one document)
     if t[:1] in "{[":
         if _try_json(t) is not None:
             return _result("json", "JSON", t, notes)
+        # JSON Lines: one JSON record per line
+        if _json_lines(t):
+            bad = [i + 1 for i, l in enumerate(x for x in t.splitlines() if x.strip()) if _try_json(l.strip()) is None]
+            if not bad:
+                return _result("jsonl", "JSON Lines", t, notes)
+            return _result("json", "JSON", t, notes, valid=False,
+                           error=f"Invalid JSON on line{'s' if len(bad) > 1 else ''} {', '.join(map(str, bad[:10]))}")
         return _result("json", "JSON", t, notes, valid=False, error=_json_error(t))
 
     # XML family
@@ -214,17 +247,94 @@ def _xml_node(node, level, out):
         out.append(f"{pad}<!--{node.data}-->")
 
 
+# ---------- Lenient formatting (for broken / truncated data) ----------
+def format_json_loose(t):
+    """Indent JSON-like text even when it is broken (missing brackets, cut-off lines ...).
+    It never fails: it simply follows {, [, commas and quotes."""
+    out, indent, i, n = [], 0, 0, len(t)
+    pad = lambda: "\n" + INDENT * max(indent, 0)
+    in_str = False
+    while i < n:
+        c = t[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:          # keep escaped characters as they are
+                out.append(t[i + 1]); i += 1
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True; out.append(c)
+        elif c in "{[":
+            j = i + 1
+            while j < n and t[j] in " \t\r\n": j += 1
+            if j < n and t[j] == ("}" if c == "{" else "]"):   # empty {} or []
+                out.append(c + t[j]); i = j
+            else:
+                indent += 1; out.append(c + pad())
+        elif c in "}]":
+            indent -= 1; out.append(pad() + c)
+        elif c == ",":
+            out.append("," + pad())
+        elif c == ":":
+            out.append(": ")
+        elif c not in " \t\r\n":
+            out.append(c)
+        i += 1
+    return "".join(out).strip()
+
+
+def _format_json_record(line, sort_keys=False):
+    return format_json(line, sort_keys) if _try_json(line) is not None else format_json_loose(line)
+
+
+def format_json_any(t, sort_keys=False):
+    """Valid JSON -> normal format. JSON Lines / logs -> each record on its own, valid or not."""
+    if _try_json(t) is not None:
+        return format_json(t, sort_keys)
+    if _json_lines(t):
+        records = [l.strip() for l in t.splitlines() if l.strip()]
+        return "\n\n".join(_format_json_record(r, sort_keys) for r in records)
+    return format_json_loose(t)
+
+
+XML_TOKEN_RE = re.compile(r"(<!\[CDATA\[.*?\]\]>|<!--.*?-->|<[^>]+>)", re.S)
+
+
+def format_xml_loose(t):
+    """Indent XML-like text tag by tag, even when tags are not balanced."""
+    out, level = [], 0
+    for tok in XML_TOKEN_RE.split(t):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if tok.startswith("</"):
+            level = max(level - 1, 0); out.append(INDENT * level + tok)
+        elif tok.startswith(("<?", "<!")) or tok.endswith("/>") or not tok.startswith("<"):
+            out.append(INDENT * level + tok)
+        else:
+            out.append(INDENT * level + tok); level += 1
+    # put short text values back on the same line as their tags: <a>value</a>
+    merged = []
+    for line in out:
+        s = line.strip()
+        if (len(merged) >= 2 and s.startswith("</") and not merged[-1].strip().startswith("<")
+                and merged[-2].strip().startswith("<") and not merged[-2].strip().startswith("</")):
+            text = merged.pop().strip()
+            merged[-1] = merged[-1] + text + s
+        else:
+            merged.append(line)
+    return "\n".join(merged)
+
+
 def format_text(info, sort_keys=False):
-    """Pretty format when possible; otherwise return the cleaned text."""
+    """Pretty format when possible. Broken data is still formatted (best effort)."""
     t = info["cleaned"]
-    if not info["valid"]:
-        return t
     try:
-        if info["format"] == "json":
-            return format_json(t, sort_keys)
+        if info["format"] in ("json", "jsonl"):
+            return format_json_any(t, sort_keys)
         if info["format"] in ("xml", "soap"):
-            return format_xml(t)
-        if info["format"] == "form":
+            return format_xml(t) if info["valid"] else format_xml_loose(t)
+        if info["format"] == "form" and info["valid"]:
             return "\n".join(f"{k} = {v}" for k, v in parse_qsl(t, keep_blank_values=True))
     except Exception:
         return t
